@@ -1,6 +1,58 @@
 import tkinter as tk
 from tkinter import messagebox
 import random
+import json
+import os
+from datetime import datetime
+
+# ==============================================================
+#  HISTÓRICO JSON  —  Salva e carrega resultados de batalhas
+# ==============================================================
+
+ARQUIVO_HISTORICO = "historico.json"
+
+def carregar_historico() -> dict:
+    """
+    Lê o arquivo historico.json e retorna os dados.
+    Se o arquivo não existir, retorna um histórico vazio.
+    """
+    if os.path.exists(ARQUIVO_HISTORICO):
+        with open(ARQUIVO_HISTORICO, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {"vitorias": 0, "derrotas": 0, "batalhas": []}
+
+def salvar_historico(historico: dict) -> None:
+    """
+    Grava o dicionário de histórico no arquivo historico.json.
+    O parâmetro indent=2 deixa o arquivo legível para humanos.
+    """
+    with open(ARQUIVO_HISTORICO, "w", encoding="utf-8") as f:
+        json.dump(historico, f, ensure_ascii=False, indent=2)
+
+def registrar_batalha(historico: dict, jogador: str, inimigo: str, resultado: str) -> None:
+    """
+    Adiciona uma entrada de batalha ao histórico e atualiza os contadores.
+    Mantém apenas as últimas 20 batalhas para não crescer demais.
+    """
+    if resultado == "vitoria":
+        historico["vitorias"] += 1
+    else:
+        historico["derrotas"] += 1
+
+    entrada = {
+        "data": datetime.now().strftime("%d/%m/%Y %H:%M"),
+        "jogador": jogador,
+        "inimigo": inimigo,
+        "resultado": resultado
+    }
+    historico["batalhas"].append(entrada)
+
+    # Mantém apenas as últimas 20 batalhas
+    if len(historico["batalhas"]) > 20:
+        historico["batalhas"] = historico["batalhas"][-20:]
+
+    salvar_historico(historico)
+
 
 # ==============================================================
 #  LÓGICA DO JOGO  —  POO com Herança e Polimorfismo
@@ -69,7 +121,6 @@ class Monstrinho:
             return (f"{self.nome} usou {ataque.nome}!\n"
                     f"{msg_vantagem}Causou {dano_causado} de dano em {alvo.nome}.")
         else:
-            # Sem PE → Investida Cega com recuo
             recuo = self.dano_recuo()                                         # [POLIMORFISMO]
             self.hp_atual = max(0, self.hp_atual - recuo)
             dano_causado = alvo.receber_dano(10)
@@ -82,12 +133,12 @@ class Monstrinho:
     def calcular_vantagem(self, tipo_defensor: str) -> tuple:
         """[POLIMORFISMO] Retorna (multiplicador, mensagem) com base na tipagem."""
         tabela = {
-            ("Vírus",   "Bactéria"): (1.5, "✨ Super efetivo! "),
-            ("Bactéria","Fungo"):    (1.5, "✨ Super efetivo! "),
-            ("Fungo",   "Vírus"):   (1.5, "✨ Super efetivo! "),
-            ("Vírus",   "Fungo"):   (0.5, "🍃 Pouco efetivo... "),
-            ("Bactéria","Vírus"):   (0.5, "🍃 Pouco efetivo... "),
-            ("Fungo",   "Bactéria"):(0.5, "🍃 Pouco efetivo... "),
+            ("Vírus",    "Bactéria"): (1.5, "✨ Super efetivo! "),
+            ("Bactéria", "Fungo"):    (1.5, "✨ Super efetivo! "),
+            ("Fungo",    "Vírus"):    (1.5, "✨ Super efetivo! "),
+            ("Vírus",    "Fungo"):    (0.5, "🍃 Pouco efetivo... "),
+            ("Bactéria", "Vírus"):    (0.5, "🍃 Pouco efetivo... "),
+            ("Fungo",    "Bactéria"): (0.5, "🍃 Pouco efetivo... "),
         }
         if self.tipo == tipo_defensor:
             return (0.8, "🔵 Pouco efetivo (mesmo tipo)... ")
@@ -122,16 +173,16 @@ class Virus(Monstrinho):
     """
     [HERANÇA] Vírus são rápidos e causam dano extra, mas têm menos HP.
     Habilidade passiva: Mutação — cada ataque tem 20% de chance de
-    ignorar completamente a defesa do alvo.
+    acerto crítico (+35% de dano).
     """
 
     def __init__(self, nome, hp_max, defesa, velocidade, ataques):
         super().__init__(nome, "Vírus", hp_max, defesa, velocidade, ataques)
 
     def bonus_ataque(self) -> float:
-        """[POLIMORFISMO] 20% de chance de ataque crítico (ignora defesa via bonus)."""
+        """[POLIMORFISMO] 20% de chance de ataque crítico."""
         if random.random() < 0.20:
-            return 1.35   # acerto crítico
+            return 1.35
         return 1.0
 
     def dano_recuo(self) -> int:
@@ -145,18 +196,15 @@ class Virus(Monstrinho):
 class Bacteria(Monstrinho):
     """
     [HERANÇA] Bactérias são equilibradas com capacidade de regenerar PE.
-    Habilidade passiva: Fissão — recupera 5 PE ao final de cada turno
-    em que causou dano.
+    Habilidade passiva: Fissão — recupera 5 PE ao causar dano.
     """
 
     def __init__(self, nome, hp_max, defesa, velocidade, ataques):
         super().__init__(nome, "Bactéria", hp_max, defesa, velocidade, ataques)
-        self._causou_dano_no_turno = False
 
     def usar_ataque(self, ataque: Ataque, alvo: "Monstrinho") -> str:
         """[POLIMORFISMO] Sobrescreve para ativar habilidade passiva de regeneração."""
         resultado = super().usar_ataque(ataque, alvo)
-        # Recupera PE se causou dano (detectado por "de dano" no log)
         if "de dano" in resultado:
             ganho = min(5, self.pe_max - self.pe_atual)
             self.pe_atual += ganho
@@ -171,8 +219,7 @@ class Bacteria(Monstrinho):
 class Fungo(Monstrinho):
     """
     [HERANÇA] Fungos são lentos mas muito resistentes.
-    Habilidade passiva: Quitina — reduz todo dano recebido em 3 pontos
-    adicionais (empilha com a defesa normal).
+    Habilidade passiva: Quitina — reduz todo dano recebido em +3 extras.
     """
 
     def __init__(self, nome, hp_max, defesa, velocidade, ataques):
@@ -221,9 +268,9 @@ CATALOGO: list[Monstrinho] = [
     Bacteria("Lactobacillus",        hp_max=125, defesa=12, velocidade=20, ataques=atks_bacteria),
 
     # ── Fungos (lentos, muita defesa/vida) ───────────────────
-    Fungo("Candida auris",    hp_max=115, defesa=16, velocidade=12, ataques=atks_fungo),
-    Fungo("Cogumelo Proibido",hp_max=110, defesa=18, velocidade=10, ataques=atks_fungo),
-    Fungo("Penicillium",      hp_max=120, defesa=14, velocidade=14, ataques=atks_fungo),
+    Fungo("Candida auris",     hp_max=115, defesa=16, velocidade=12, ataques=atks_fungo),
+    Fungo("Cogumelo Proibido", hp_max=110, defesa=18, velocidade=10, ataques=atks_fungo),
+    Fungo("Penicillium",       hp_max=120, defesa=14, velocidade=14, ataques=atks_fungo),
 ]
 
 
@@ -232,18 +279,19 @@ CATALOGO: list[Monstrinho] = [
 # ==============================================================
 
 CORES = {
-    "bg":        "#1a1a2e",   # fundo escuro (científico/misterioso)
+    "bg":        "#1a1a2e",
     "painel":    "#16213e",
     "accent":    "#0f3460",
-    "Vírus":     "#e94560",   # vermelho
-    "Bactéria":  "#4ecca3",   # verde-água
-    "Fungo":     "#f5a623",   # laranja
+    "Vírus":     "#e94560",
+    "Bactéria":  "#4ecca3",
+    "Fungo":     "#f5a623",
     "texto":     "#eaeaea",
     "log_bg":    "#0d0d1a",
     "log_fg":    "#a8d8a8",
     "btn_bg":    "#0f3460",
     "btn_hover": "#e94560",
     "desistir":  "#444",
+    "historico": "#1e1e3a",
 }
 
 def cor_tipo(tipo: str) -> str:
@@ -254,13 +302,16 @@ class JogoApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("⚗️ BioMonsters Arena")
-        self.root.geometry("600x640")
+        self.root.geometry("600x700")
         self.root.configure(bg=CORES["bg"])
         self.root.resizable(False, False)
 
         self.monstro_jogador: Monstrinho | None = None
         self.monstro_inimigo: Monstrinho | None = None
         self.botoes_ataque: list[tk.Button] = []
+
+        # Carrega o histórico do JSON ao iniciar o jogo
+        self.historico = carregar_historico()
 
         self.tela_selecao()
 
@@ -294,15 +345,19 @@ class JogoApp:
             text="⚗️  BioMonsters Arena",
             font=("Courier", 18, "bold"),
             bg=CORES["bg"], fg=CORES["texto"]
-        ).pack(pady=(20, 4))
+        ).pack(pady=(16, 2))
 
         tk.Label(
             self.root,
             text="Escolha seu Bio-Monster para a batalha!",
             font=("Courier", 10),
             bg=CORES["bg"], fg="#888"
-        ).pack(pady=(0, 14))
+        ).pack(pady=(0, 8))
 
+        # ── Painel de histórico ──────────────────────────────
+        self._montar_painel_historico()
+
+        # ── Seleção de monstrinhos ───────────────────────────
         for tipo in ["Vírus", "Bactéria", "Fungo"]:
             frame_tipo = tk.LabelFrame(
                 self.root,
@@ -311,11 +366,10 @@ class JogoApp:
                 bg=CORES["painel"], fg=cor_tipo(tipo),
                 bd=1, relief="groove", padx=8, pady=6
             )
-            frame_tipo.pack(fill="x", padx=22, pady=5)
+            frame_tipo.pack(fill="x", padx=22, pady=4)
 
             monstros = [m for m in CATALOGO if m.tipo == tipo]
             for m in monstros:
-                passiva = m.habilidade_passiva_descricao()
                 texto_btn = (
                     f"{m.nome}\n"
                     f"HP:{m.hp_max}  DEF:{m.defesa}  VEL:{m.velocidade}"
@@ -327,9 +381,88 @@ class JogoApp:
                     bg=CORES["accent"], fg=cor_tipo(tipo)
                 )
                 btn.pack(side=tk.LEFT, padx=6, pady=4)
+                self._adicionar_tooltip(btn, m.habilidade_passiva_descricao())
 
-                # Tooltip simples com habilidade passiva
-                self._adicionar_tooltip(btn, passiva)
+    def _montar_painel_historico(self):
+        """Monta o painel de estatísticas lido do historico.json."""
+        v = self.historico["vitorias"]
+        d = self.historico["derrotas"]
+        total = v + d
+
+        frame = tk.Frame(self.root, bg=CORES["historico"], padx=10, pady=6)
+        frame.pack(fill="x", padx=22, pady=(0, 8))
+
+        # Linha de estatísticas
+        tk.Label(
+            frame,
+            text=f"📊 Histórico  —  ✅ Vitórias: {v}   ❌ Derrotas: {d}   🎮 Total: {total}",
+            font=("Courier", 9, "bold"),
+            bg=CORES["historico"], fg=CORES["texto"]
+        ).pack(anchor="w")
+
+        # Última batalha
+        if self.historico["batalhas"]:
+            ultima = self.historico["batalhas"][-1]
+            icone = "🏆" if ultima["resultado"] == "vitoria" else "💀"
+            tk.Label(
+                frame,
+                text=(f"Última batalha ({ultima['data']}): "
+                      f"{ultima['jogador']} vs {ultima['inimigo']} → {icone}"),
+                font=("Courier", 8),
+                bg=CORES["historico"], fg="#aaa"
+            ).pack(anchor="w", pady=(2, 0))
+
+            # Botão para ver histórico completo
+            self._btn(
+                frame, "Ver histórico completo",
+                self._mostrar_historico_completo,
+                largura=24, altura=1,
+                bg=CORES["accent"], fg=CORES["texto"],
+                fonte=("Courier", 8)
+            ).pack(anchor="e", pady=(4, 0))
+        else:
+            tk.Label(
+                frame,
+                text="Nenhuma batalha registrada ainda. Jogue a primeira!",
+                font=("Courier", 8),
+                bg=CORES["historico"], fg="#666"
+            ).pack(anchor="w", pady=(2, 0))
+
+    def _mostrar_historico_completo(self):
+        """Abre uma janela popup com as últimas batalhas do historico.json."""
+        janela = tk.Toplevel(self.root)
+        janela.title("Histórico de Batalhas")
+        janela.geometry("420x320")
+        janela.configure(bg=CORES["bg"])
+        janela.resizable(False, False)
+
+        tk.Label(
+            janela, text="📜 Histórico de Batalhas",
+            font=("Courier", 12, "bold"),
+            bg=CORES["bg"], fg=CORES["texto"]
+        ).pack(pady=(12, 6))
+
+        txt = tk.Text(
+            janela, height=14, width=52,
+            bg=CORES["log_bg"], fg=CORES["log_fg"],
+            font=("Courier", 9), relief="flat",
+            padx=8, pady=6, state="normal"
+        )
+        txt.pack(padx=12, pady=4)
+
+        batalhas = self.historico["batalhas"]
+        if not batalhas:
+            txt.insert(tk.END, "Nenhuma batalha registrada ainda.")
+        else:
+            # Mostra do mais recente para o mais antigo
+            for b in reversed(batalhas):
+                icone = "🏆" if b["resultado"] == "vitoria" else "💀"
+                linha = (f"{icone} {b['data']}\n"
+                         f"   {b['jogador']} vs {b['inimigo']}\n"
+                         f"{'─' * 40}\n")
+                txt.insert(tk.END, linha)
+
+        txt.config(state="disabled")
 
     def _adicionar_tooltip(self, widget: tk.Widget, texto: str):
         """Exibe um tooltip ao passar o mouse sobre o widget."""
@@ -360,7 +493,6 @@ class JogoApp:
 
     def iniciar_batalha(self, monstro_escolhido: Monstrinho):
         self.monstro_jogador = monstro_escolhido.clonar()
-        # Inimigo não pode ser o mesmo que o jogador escolheu
         possiveis = [m for m in CATALOGO if m.nome != monstro_escolhido.nome]
         self.monstro_inimigo = random.choice(possiveis).clonar()
         self.montar_tela_batalha()
@@ -370,21 +502,18 @@ class JogoApp:
     def montar_tela_batalha(self):
         self.limpar_tela()
 
-        # Cabeçalho
         tk.Label(
             self.root, text="⚔️  Batalha!",
             font=("Courier", 14, "bold"),
             bg=CORES["bg"], fg=CORES["texto"]
         ).pack(pady=(14, 2))
 
-        # Status do inimigo
         self.lbl_inimigo = tk.Label(
             self.root, font=("Courier", 11, "bold"),
             bg=CORES["bg"], fg=cor_tipo(self.monstro_inimigo.tipo)
         )
         self.lbl_inimigo.pack()
 
-        # Barra de HP inimigo
         self.frame_hp_inimigo = tk.Frame(self.root, bg=CORES["bg"])
         self.frame_hp_inimigo.pack()
         self.canvas_hp_inimigo = tk.Canvas(
@@ -399,14 +528,12 @@ class JogoApp:
             bg=CORES["bg"], fg="#555"
         ).pack(pady=4)
 
-        # Status do jogador
         self.lbl_jogador = tk.Label(
             self.root, font=("Courier", 11, "bold"),
             bg=CORES["bg"], fg=cor_tipo(self.monstro_jogador.tipo)
         )
         self.lbl_jogador.pack()
 
-        # Barra de HP jogador
         self.frame_hp_jogador = tk.Frame(self.root, bg=CORES["bg"])
         self.frame_hp_jogador.pack()
         self.canvas_hp_jogador = tk.Canvas(
@@ -415,7 +542,6 @@ class JogoApp:
         )
         self.canvas_hp_jogador.pack(pady=2)
 
-        # Log de batalha
         self.txt_log = tk.Text(
             self.root, height=8, width=62,
             state="disabled", wrap="word",
@@ -425,7 +551,6 @@ class JogoApp:
         )
         self.txt_log.pack(pady=8, padx=16)
 
-        # Botões de ataque (grid 2×2)
         self.frame_botoes = tk.Frame(self.root, bg=CORES["bg"])
         self.frame_botoes.pack()
 
@@ -439,7 +564,6 @@ class JogoApp:
             btn.grid(row=i // 2, column=i % 2, padx=6, pady=4)
             self.botoes_ataque.append(btn)
 
-        # Botão desistir
         self._btn(
             self.root, "↩  Desistir e voltar",
             self.tela_selecao,
@@ -453,23 +577,20 @@ class JogoApp:
             f"A batalha começou!\n"
             f"{self.monstro_jogador.nome} (VEL:{self.monstro_jogador.velocidade}) "
             f"enfrenta {self.monstro_inimigo.nome} (VEL:{self.monstro_inimigo.velocidade})!\n"
-            f"Passiva do seu monstrinho → {self.monstro_jogador.habilidade_passiva_descricao()}"
+            f"Passiva → {self.monstro_jogador.habilidade_passiva_descricao()}"
         )
 
     def _desenhar_barra_hp(self, canvas: tk.Canvas, monstrinho: Monstrinho, cor: str):
         canvas.delete("all")
         proporcao = monstrinho.hp_atual / monstrinho.hp_max
-        largura_total = 340
-        largura_hp = int(largura_total * proporcao)
+        largura_hp = int(340 * proporcao)
         canvas.create_rectangle(0, 0, largura_hp, 12, fill=cor, outline="")
 
     def atualizar_telas(self):
         j = self.monstro_jogador
         i = self.monstro_inimigo
-
         self.lbl_inimigo.config(
-            text=(f"👾 {i.nome} [{i.tipo}]\n"
-                  f"HP: {i.hp_atual}/{i.hp_max}")
+            text=(f"👾 {i.nome} [{i.tipo}]\nHP: {i.hp_atual}/{i.hp_max}")
         )
         self.lbl_jogador.config(
             text=(f"🦸 {j.nome} [{j.tipo}]\n"
@@ -493,11 +614,25 @@ class JogoApp:
     def checar_fim_de_jogo(self) -> bool:
         if not self.monstro_inimigo.esta_vivo():
             self.log("🏆 VOCÊ VENCEU! O inimigo foi derrotado!")
+            # Salva vitória no JSON
+            registrar_batalha(
+                self.historico,
+                jogador=self.monstro_jogador.nome,
+                inimigo=self.monstro_inimigo.nome,
+                resultado="vitoria"
+            )
             messagebox.showinfo("Fim da Batalha", "🏆 Você venceu!")
             self.tela_selecao()
             return True
         if not self.monstro_jogador.esta_vivo():
             self.log("💀 VOCÊ PERDEU! Seu monstrinho foi derrotado...")
+            # Salva derrota no JSON
+            registrar_batalha(
+                self.historico,
+                jogador=self.monstro_jogador.nome,
+                inimigo=self.monstro_inimigo.nome,
+                resultado="derrota"
+            )
             messagebox.showerror("Fim da Batalha", "💀 Você perdeu...")
             self.tela_selecao()
             return True
@@ -508,12 +643,10 @@ class JogoApp:
         ataque_inimigo = random.choice(self.monstro_inimigo.ataques)
 
         if self.monstro_jogador.velocidade >= self.monstro_inimigo.velocidade:
-            # Jogador ataca primeiro
             self.executar_ataque_jogador(ataque_escolhido)
             if not self.checar_fim_de_jogo():
                 self.root.after(1200, lambda: self.executar_ataque_inimigo(ataque_inimigo))
         else:
-            # Inimigo é mais rápido
             self.log(f"⚡ {self.monstro_inimigo.nome} é mais rápido e ataca primeiro!")
             self.executar_ataque_inimigo(ataque_inimigo)
             if not self.checar_fim_de_jogo():
