@@ -1,8 +1,3 @@
-
-# Project Title
-
-A brief description of what this project does and who it's for
-
 # ⚗️ BioMonsters Arena
 
 Jogo de batalha por turnos desenvolvido em Python com Tkinter, criado como projeto final da disciplina de Programação II.
